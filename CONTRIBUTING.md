@@ -63,7 +63,7 @@ sudo apt-get install -y python3-gi python3-gi-cairo python3-pip \
 ```
 
 `requirements-test.txt` pins the same compatible pytest and pytest-benchmark
-versions for the host, CI sandbox, and local Flatpak test script. Update them
+versions for the host, the CI sandbox, and the Flatpak test script. Update them
 together: pytest-benchmark 5.3.0 supports pytest 9.1.1, but its fixture uses
 `Node._nodeid`, which pytest 9.2 removed.
 
@@ -86,7 +86,7 @@ to run benchmarks, though the plugin is required even when benchmarks are off.
 GTK needs a display and session bus; the fixtures alone do not provide these.
 The host job may skip tests that need `Adw.Spinner` (libadwaita 1.6 or later).
 Both the host and GNOME 50 Flatpak test jobs must pass before merge.
-Use `just dev` for the separate Flatpak development path.
+Use `just dev` for the Flatpak path for development.
 
 ## Working on the UI
 
@@ -114,12 +114,12 @@ meson compile -C build tavern-pot
 Add a locale code to `po/LINGUAS` only when its `.po` catalog is ready to
 ship. Translation-only PRs are welcome and do not need changes to Python.
 
-Additional maintainer guides cover the [cache lifecycle](docs/CACHE.md),
+More guides for maintainers cover the [cache lifecycle](docs/CACHE.md),
 [curation feed](docs/CURATION.md), [accessibility release pass](docs/ACCESSIBILITY.md),
 [release process](docs/RELEASING.md), and [architecture overview](docs/ARCHITECTURE.md).
 
-The files under [`docs/reports/`](docs/reports/README.md) are dated historical
-verification snapshots, not maintained contributor instructions.
+The files under [`docs/reports/`](docs/reports/README.md) are historical
+snapshots of verification with a date. They are not instructions for contributors.
 
 ## Pull requests
 
