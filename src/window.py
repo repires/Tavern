@@ -182,7 +182,6 @@ class TavernWindow(Adw.ApplicationWindow):
         self.backend.connect('formulae-loaded', self._on_formulae_loaded)
         self.backend.connect('casks-loaded', self._on_casks_loaded)
         self.backend.connect('installed-loaded', self._on_installed_loaded)
-        self.backend.connect('cache-refreshed', self._on_cache_refreshed)
         self.backend.connect('notify::loading', self._on_backend_loading_changed)
         _log.info('Kicking off backend.load_all_async()')
         self.backend.load_all_async()
@@ -304,12 +303,6 @@ class TavernWindow(Adw.ApplicationWindow):
     def _on_installed_loaded(self, backend, _):
         _log.debug('Installed-loaded signal received')
         self._update_brew_missing_banner()
-
-    def _on_cache_refreshed(self, backend, _):
-        _log.info('Cache-refreshed signal received from backend')
-        self.browse_page.populate_formulae(backend.formulae)
-        self.browse_page.populate_casks(backend.casks)
-        self.search_page.set_packages(backend.formulae, backend.casks)
 
     def _on_outdated_count_changed(self, page, count):
         """Update the Installed tab badge when the outdated count changes."""
