@@ -810,6 +810,44 @@ class TestDnsRebindingDefense:
         assert wrapped_hosts == ['rebinding.example']
         assert conn.host == 'rebinding.example'
 
+    def test_module_opener_connects_to_pinned_ip(self, monkeypatch):
+        """media.urlopen goes through PinnedHTTPSHandler.https_open and the
+        stdlib do_open path, and the socket targets the validated address."""
+        import http.client
+        import urllib.error
+
+        answers = iter([
+            [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, '', ('93.184.216.34', 0))],
+        ])
+        monkeypatch.setattr(us.socket, 'getaddrinfo',
+                            lambda host, port, proto=0, *a, **k: next(answers, [
+                                (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, '', ('127.0.0.1', 0))]))
+        connected_addrs = []
+
+        def refuse(address, *args, **kwargs):
+            connected_addrs.append(address)
+            raise ConnectionRefusedError('test: no network')
+
+        monkeypatch.setattr(http.client.socket, 'create_connection', refuse)
+
+        with pytest.raises(urllib.error.URLError):
+            media_mod.urlopen('https://rebinding.example/icon.png', timeout=5)
+        assert connected_addrs == [('93.184.216.34', 443)]
+
+    def test_tunnel_connects_to_proxy_not_pinned_ip(self):
+        connected_addrs = []
+
+        def mock_create_connection(address, timeout=None, source_address=None):
+            connected_addrs.append(address)
+            raise ConnectionRefusedError('test: stop after connect')
+
+        conn = us.PinnedHTTPSConnection('proxy.example', 3128, pinned_ip='93.184.216.34')
+        conn.set_tunnel('rebinding.example', 443)
+        conn._create_connection = mock_create_connection
+        with pytest.raises(ConnectionRefusedError):
+            conn.connect()
+        assert connected_addrs == [('proxy.example', 3128)]
+
 
 class TestMediaUrlopenRedirectEndToEnd:
     """A real local server 302-redirects; the module opener must block the

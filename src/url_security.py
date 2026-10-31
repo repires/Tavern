@@ -144,7 +144,12 @@ class PinnedHTTPSConnection(http.client.HTTPSConnection):
         super().__init__(host, port, **kwargs)
 
     def connect(self):
-        dest_host = self._pinned_ip if self._pinned_ip else self.host
+        # Through a CONNECT proxy, self.host is the proxy and the proxy resolves
+        # the target, so only a direct connection uses the pinned address.
+        if self._pinned_ip and not self._tunnel_host:
+            dest_host = self._pinned_ip
+        else:
+            dest_host = self.host
         self.sock = self._create_connection(
             (dest_host, self.port), self.timeout, self.source_address
         )
@@ -169,7 +174,6 @@ class PinnedHTTPSHandler(HTTPSHandler):
             lambda host, **kwargs: PinnedHTTPSConnection(host, pinned_ip=pinned_ip, **kwargs),
             req,
             context=self._context,
-            check_hostname=self._check_hostname,
         )
 
 
