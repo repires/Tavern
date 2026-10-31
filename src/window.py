@@ -753,17 +753,23 @@ class TavernWindow(Adw.ApplicationWindow):
 
     def retry_homebrew_detection(self):
         from .brew_env import refresh_brew_bin, is_brew_available
-        new_bin = refresh_brew_bin()
-        available = is_brew_available(new_bin)
-        self._update_brew_missing_banner()
-        if available:
-            self.toast_overlay.add_toast(
-                Adw.Toast.new(_('Homebrew detected successfully'))
-            )
-            self.backend.refresh_installed_async()
-            self.installed_page.refresh(self.backend)
-        else:
-            self.toast_overlay.add_toast(
-                Adw.Toast.new(_('Homebrew not found yet'))
-            )
-        return available
+
+        def update_ui(available):
+            self._update_brew_missing_banner()
+            if available:
+                self.toast_overlay.add_toast(
+                    Adw.Toast.new(_('Homebrew detected successfully'))
+                )
+                self.backend.refresh_installed_async()
+                self.installed_page.refresh(self.backend)
+            else:
+                self.toast_overlay.add_toast(
+                    Adw.Toast.new(_('Homebrew not found yet'))
+                )
+            return False
+
+        def detect():
+            available = is_brew_available(refresh_brew_bin())
+            GLib.idle_add(update_ui, available)
+
+        threading.Thread(target=detect, daemon=True).start()

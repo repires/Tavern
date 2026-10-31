@@ -11,6 +11,7 @@
 import os
 import subprocess
 
+import pytest
 import tavern.brew_env as be
 
 
@@ -42,6 +43,10 @@ class TestIsFlatpak:
 # ─── brew executable discovery ────────────────────────────────────────────────
 
 class TestFindBrew:
+    @pytest.fixture(autouse=True)
+    def native(self, monkeypatch):
+        monkeypatch.setattr(be, 'IN_FLATPAK', False)
+
     def test_prefers_first_candidate(self, monkeypatch):
         monkeypatch.setattr(os.path, 'isfile', lambda p: p == '/home/linuxbrew/.linuxbrew/bin/brew')
         monkeypatch.setattr(os, "access", lambda p, m: p == '/home/linuxbrew/.linuxbrew/bin/brew')
@@ -90,3 +95,79 @@ class TestFindBrew:
             args=['which', 'brew'], returncode=0, stdout='', stderr='')
         monkeypatch.setattr(subprocess, 'run', lambda *a, **k: fake)
         assert be._find_brew() == 'brew'
+
+
+class TestFlatpakFindBrew:
+    @pytest.fixture(autouse=True)
+    def flatpak(self, monkeypatch):
+        monkeypatch.setattr(be, 'IN_FLATPAK', True)
+        # Sandbox visibility must never determine host availability.
+        monkeypatch.setattr(os.path, 'isfile', lambda p: False)
+
+    def test_discovers_host_brew_and_refreshes(self, monkeypatch):
+        path = '/home/linuxbrew/.linuxbrew/bin/brew'
+        calls = []
+
+        def run(argv, **kwargs):
+            calls.append((argv, kwargs))
+            return subprocess.CompletedProcess(argv, 0, stdout=path + '\n', stderr='')
+
+        monkeypatch.setattr(subprocess, 'run', run)
+        monkeypatch.setattr(be, 'BREW_BIN', 'brew')
+        assert be.refresh_brew_bin() == path
+        assert be.is_brew_available()
+        assert not be.should_offer_homebrew_install()
+        assert calls[0][0][:4] == ['flatpak-spawn', '--host', 'bash', '-c']
+        assert calls[0][1]['timeout'] == 5
+
+    @pytest.mark.parametrize('status,output', [
+        (1, ''), (0, ''), (0, 'brew\n'), (0, '/one\n/two\n'),
+    ])
+    def test_failed_or_invalid_probe_reports_missing(self, monkeypatch, status, output):
+        monkeypatch.setattr(subprocess, 'run', lambda *a, **k: subprocess.CompletedProcess(
+            a[0], status, stdout=output, stderr=''))
+        assert be._find_brew() == 'brew'
+        assert be.should_offer_homebrew_install(be._find_brew())
+
+    @pytest.mark.parametrize('error', [OSError('missing spawn'), subprocess.TimeoutExpired('spawn', 5)])
+    def test_probe_errors_report_missing(self, monkeypatch, error):
+        def fail(*args, **kwargs):
+            raise error
+        monkeypatch.setattr(subprocess, 'run', fail)
+        assert be._find_brew() == 'brew'
+
+    def test_host_probe_finds_home_install_via_host_shell(self, monkeypatch, tmp_path):
+        brew = tmp_path / '.linuxbrew' / 'bin' / 'brew'
+        brew.parent.mkdir(parents=True)
+        brew.write_text('#!/bin/sh\nexit 0\n')
+        brew.chmod(0o755)
+        real_run = subprocess.run
+
+        def host_run(argv, **kwargs):
+            assert argv[:3] == ['flatpak-spawn', '--host', 'bash']
+            script = argv[4].replace('/home/linuxbrew/.linuxbrew/bin/brew', '/nonexistent/tavern-brew')
+            script = script.replace('/opt/homebrew/bin/brew', '/nonexistent/tavern-brew')
+            script = script.replace('/usr/local/bin/brew', '/nonexistent/tavern-brew')
+            return real_run(['/bin/bash', '-c', script],
+                            env={'HOME': str(tmp_path), 'PATH': '/usr/bin:/bin'}, **kwargs)
+
+        monkeypatch.setattr(subprocess, 'run', host_run)
+        assert be._find_brew() == str(brew)
+        brew.chmod(0o644)
+        assert be._find_brew() == 'brew'
+
+    def test_host_path_fallback(self, monkeypatch, tmp_path):
+        brew = tmp_path / 'brew'
+        brew.write_text('#!/bin/sh\nexit 0\n')
+        brew.chmod(0o755)
+        real_run = subprocess.run
+
+        def host_run(argv, **kwargs):
+            script = argv[4].replace('/home/linuxbrew/.linuxbrew/bin/brew', '/nonexistent/tavern-brew')
+            script = script.replace('/opt/homebrew/bin/brew', '/nonexistent/tavern-brew')
+            script = script.replace('/usr/local/bin/brew', '/nonexistent/tavern-brew')
+            return real_run(['/bin/bash', '-c', script],
+                            env={'HOME': str(tmp_path), 'PATH': str(tmp_path)}, **kwargs)
+
+        monkeypatch.setattr(subprocess, 'run', host_run)
+        assert be._find_brew() == str(brew)

@@ -45,6 +45,44 @@ class TestRefreshBrewBin:
         finally:
             be.BREW_BIN = orig_bin
 
+class TestRetryDetection:
+    @pytest.mark.parametrize('available', [True, False])
+    def test_retry_probes_off_thread_and_updates_on_idle(self, monkeypatch, available):
+        import types
+        import tavern.window as window
+
+        events = []
+        pending = []
+
+        class FakeThread:
+            def __init__(self, *, target, daemon):
+                assert daemon
+                self.target = target
+
+            def start(self):
+                pending.append(self.target)
+
+        monkeypatch.setattr(window.threading, 'Thread', FakeThread)
+        monkeypatch.setattr(be, 'refresh_brew_bin', lambda: events.append('probe') or (
+            '/host/bin/brew' if available else 'brew'))
+        monkeypatch.setattr(window.GLib, 'idle_add', lambda fn, *args: pending.append(lambda: fn(*args)))
+        monkeypatch.setattr(window, 'Adw', types.SimpleNamespace(
+            Toast=types.SimpleNamespace(new=lambda text: text)))
+        win = types.SimpleNamespace(
+            _update_brew_missing_banner=lambda: events.append('banner'),
+            toast_overlay=types.SimpleNamespace(add_toast=lambda text: events.append('toast')),
+            backend=types.SimpleNamespace(refresh_installed_async=lambda: events.append('backend')),
+            installed_page=types.SimpleNamespace(refresh=lambda backend: events.append('page')),
+        )
+        window.TavernWindow.retry_homebrew_detection(win)
+        assert events == []
+        pending.pop(0)()
+        assert events == ['probe']
+        pending.pop(0)()
+        assert events == (['probe', 'banner', 'toast', 'backend', 'page'] if available
+                          else ['probe', 'banner', 'toast'])
+
+
 class TestHomebrewInstallerCommands:
     def test_build_homebrew_install_command_native(self):
         cmd = be.build_homebrew_install_command(in_flatpak=False)

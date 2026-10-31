@@ -57,9 +57,13 @@ _FLATPAK_PATH_REORDER_SNIPPET = (
     '__tavern_sys=""; __tavern_brew=""; '
     'IFS=: read -ra __tavern_parts <<<"$PATH"; '
     'for __tavern_p in "${__tavern_parts[@]}"; do '
-    'case "$__tavern_p" in *linuxbrew*|*homebrew*) '
+    'if [ -n "${HOMEBREW_PREFIX:-}" ] && '
+    '{ [ "$__tavern_p" = "$HOMEBREW_PREFIX/bin" ] || '
+    '[ "$__tavern_p" = "$HOMEBREW_PREFIX/sbin" ]; }; then '
+    '__tavern_brew="${__tavern_brew:+$__tavern_brew:}$__tavern_p"; '
+    'else case "$__tavern_p" in *linuxbrew*|*homebrew*) '
     '__tavern_brew="${__tavern_brew:+$__tavern_brew:}$__tavern_p";; '
-    '*) __tavern_sys="${__tavern_sys:+$__tavern_sys:}$__tavern_p";; esac; done; '
+    '*) __tavern_sys="${__tavern_sys:+$__tavern_sys:}$__tavern_p";; esac; fi; done; '
     'PATH="${__tavern_sys}${__tavern_brew:+:$__tavern_brew}"; '
     'unset __tavern_sys __tavern_brew __tavern_parts __tavern_p; '
     'export PATH'
@@ -74,7 +78,32 @@ def _is_flatpak():
 
 
 def _find_brew():
-    """Find the brew executable."""
+    """Find brew where commands will run, not inside the Flatpak sandbox."""
+    if IN_FLATPAK:
+        # Sandbox filesystem/PATH visibility does not describe the host. Probe
+        # there without granting the app access to the host's Homebrew prefix.
+        script = (
+            'for brew in /home/linuxbrew/.linuxbrew/bin/brew '
+            '"$HOME/.linuxbrew/bin/brew" /opt/homebrew/bin/brew '
+            '/usr/local/bin/brew "$(command -v brew)"; do '
+            'case "$brew" in /*) '
+            'if [ -f "$brew" ] && [ -x "$brew" ]; then '
+            'printf "%s\\n" "$brew"; exit 0; fi;; esac; done; exit 1'
+        )
+        try:
+            result = subprocess.run(
+                ['flatpak-spawn', '--host', 'bash', '-c', script],
+                capture_output=True, text=True, timeout=5,
+            )
+            path = result.stdout.strip()
+            if result.returncode == 0 and os.path.isabs(path) and '\n' not in path:
+                _log.info('Found host brew at %s', path)
+                return path
+        except (OSError, subprocess.TimeoutExpired) as e:
+            _log.warning('Host brew discovery failed: %s', e)
+        _log.warning('brew executable not found on host; falling back to bare "brew"')
+        return 'brew'
+
     candidates = [
         '/home/linuxbrew/.linuxbrew/bin/brew',
         '/opt/homebrew/bin/brew',
@@ -267,14 +296,15 @@ def build_command(args, *, in_flatpak=None, brew_bin=None):
     brew_bin = BREW_BIN if brew_bin is None else brew_bin
     if in_flatpak:
         quoted = ' '.join(shlex.quote(str(arg)) for arg in args)
+        brew = shlex.quote(brew_bin)
         return [
             'flatpak-spawn', '--host', 'bash', '-c',
             'export HOMEBREW_NO_AUTO_UPDATE=1 && '
             'export HOMEBREW_API_AUTO_UPDATE_SECS=604800 && '
             'export HOMEBREW_NO_INSTALL_ASK=1 && '
             'export HOMEBREW_NO_COLOR=1 && export LC_ALL=C && '
-            'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)" && '
+            f'eval "$({brew} shellenv)" && '
             + _FLATPAK_PATH_REORDER_SNIPPET
-            + f' && brew {quoted}',
+            + f' && {brew} {quoted}',
         ]
     return [brew_bin, *args]

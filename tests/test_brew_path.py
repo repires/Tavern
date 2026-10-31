@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import os
+import subprocess
 import tavern.brew_env as be
 
 
@@ -81,3 +82,37 @@ class TestFlatpakPathReorderSnippet:
         assert 'shellenv' in joined
         assert be._FLATPAK_PATH_REORDER_SNIPPET in joined
         assert 'brew install curl' in joined
+
+    def test_flatpak_uses_discovered_host_executable_for_shellenv_and_command(self, tmp_path):
+        brew = tmp_path / "brew's bin" / 'brew'
+        brew.parent.mkdir()
+        brew.write_text('#!/bin/sh\nprintf "%s\\n" "$@" >> "$BREW_LOG"\n')
+        brew.chmod(0o755)
+        log = tmp_path / 'calls'
+        cmd = be.build_command(['install', 'evil;touch bad'], in_flatpak=True, brew_bin=str(brew))
+        result = subprocess.run(['/bin/bash', '-c', cmd[-1]], cwd=tmp_path,
+                                env={'PATH': '/usr/bin:/bin', 'BREW_LOG': str(log)},
+                                capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        assert log.read_text().splitlines() == ['shellenv', 'install', 'evil;touch bad']
+        assert not (tmp_path / 'bad').exists()
+
+    def test_custom_prefix_is_demoted_after_shellenv(self, tmp_path):
+        prefix = tmp_path / 'custom'
+        brew = prefix / 'bin' / 'brew'
+        brew.parent.mkdir(parents=True)
+        brew.write_text(
+            '#!/bin/sh\n'
+            'if [ "$1" = shellenv ]; then\n'
+            f'  echo "export HOMEBREW_PREFIX=\"{prefix}\""\n'
+            f'  echo "export PATH=\"{prefix}/bin:{prefix}/sbin:/usr/bin:/bin\""\n'
+            'else\n  printf "%s" "$PATH" > "$BREW_LOG"\nfi\n'
+        )
+        brew.chmod(0o755)
+        log = tmp_path / 'path'
+        cmd = be.build_command(['list'], in_flatpak=True, brew_bin=str(brew))
+        result = subprocess.run(['/bin/bash', '-c', cmd[-1]],
+                                env={'PATH': '/usr/bin:/bin', 'BREW_LOG': str(log)},
+                                capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        assert log.read_text() == f'/usr/bin:/bin:{prefix}/bin:{prefix}/sbin'
